@@ -1,8 +1,14 @@
 const nodemailer = require('nodemailer');
 const logger = require('../utils/logger');
 
+/**
+ * EmailService - Enhanced notification system for Gudangkita API
+ * Week 6 Enhancement: Improved email templates and notification handling
+ * Manages all email communications for request approvals and inventory alerts
+ */
 class EmailService {
   constructor() {
+    // SMTP transporter configuration for production email delivery
     this.transporter = nodemailer.createTransporter({
       host: process.env.SMTP_HOST,
       port: process.env.SMTP_PORT,
@@ -12,6 +18,11 @@ class EmailService {
         pass: process.env.SMTP_PASSWORD
       }
     });
+
+    // Service metadata for tracking and debugging
+    this.serviceVersion = '2.0.0'; // Updated for Week 6 enhancements
+    this.totalEmailsSent = 0;
+    this.lastActivityTimestamp = null;
 
     // Verify connection on startup
     this.verifyConnection();
@@ -28,16 +39,27 @@ class EmailService {
 
   async sendEmail(options) {
     try {
+      // Enhanced email options with improved metadata tracking
       const mailOptions = {
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
         to: options.to,
         subject: options.subject,
         text: options.text,
-        html: options.html
+        html: options.html,
+        // Week 6 Enhancement: Add email tracking headers
+        headers: {
+          'X-Gudangkita-Service': `EmailService v${this.serviceVersion}`,
+          'X-Sent-At': new Date().toISOString()
+        }
       };
 
       const result = await this.transporter.sendMail(mailOptions);
-      logger.info(`Email sent successfully to ${options.to}`);
+      
+      // Update service statistics for monitoring
+      this.totalEmailsSent++;
+      this.lastActivityTimestamp = new Date().toISOString();
+      
+      logger.info(`Email sent successfully to ${options.to} (Total sent: ${this.totalEmailsSent})`);
       return result;
     } catch (error) {
       logger.error(`Failed to send email to ${options.to}:`, error);

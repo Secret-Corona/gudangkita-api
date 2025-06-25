@@ -1,3 +1,8 @@
+/**
+ * Request Model - Week 6 Enhancement
+ * Enhanced request model with improved validation and helper methods
+ * Core model for approval/reject workflows and public request handling
+ */
 module.exports = (sequelize, DataTypes) => {
   const Request = sequelize.define('Request', {
     id: {
@@ -89,7 +94,7 @@ module.exports = (sequelize, DataTypes) => {
     updatedAt: 'updated_at'
   });
 
-  // Instance methods
+  // Instance methods - Enhanced for Week 6 approval workflows
   Request.prototype.canBeApproved = function() {
     return this.status === 'pending';
   };
@@ -100,6 +105,39 @@ module.exports = (sequelize, DataTypes) => {
 
   Request.prototype.isCompleted = function() {
     return this.status === 'completed';
+  };
+
+  // Week 6 Enhancement: Additional helper methods for improved request management
+  Request.prototype.isPending = function() {
+    return this.status === 'pending';
+  };
+
+  Request.prototype.isApproved = function() {
+    return this.status === 'approved';
+  };
+
+  Request.prototype.isRejected = function() {
+    return this.status === 'rejected';
+  };
+
+  Request.prototype.getStatusColor = function() {
+    const colors = {
+      'pending': '#FFA500',    // Orange
+      'approved': '#008000',   // Green
+      'rejected': '#FF0000',   // Red
+      'completed': '#0000FF'   // Blue
+    };
+    return colors[this.status] || '#808080'; // Default gray
+  };
+
+  Request.prototype.getFormattedCreatedDate = function() {
+    return new Date(this.created_at).toLocaleDateString('id-ID', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   return Request;
