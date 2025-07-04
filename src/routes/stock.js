@@ -6,14 +6,27 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
+/**
+ * STOCK MODULE - Week 6 Enhancement
+ * ==================================
+ * Enhanced stock management with real-time updates and comprehensive audit logging
+ * Features:
+ * - Real-time stock tracking with low stock alerts
+ * - Comprehensive restock functionality with transaction logging
+ * - Audit trail for all stock operations
+ * - WebSocket integration for real-time updates
+ * - Advanced stock status monitoring
+ */
+
 // GET /api/stock - Get all items with current stock (real-time)
+// Enhanced with advanced filtering and real-time status monitoring
 router.get('/', authenticateToken, requireUser, async (req, res, next) => {
   try {
     const { search, low_stock } = req.query;
     
     let whereClause = {};
     
-    // Search by item name if provided
+    // Search by item name if provided - Case insensitive search
     if (search) {
       whereClause.nama_barang = {
         [require('sequelize').Op.iLike]: `%${search}%`
@@ -25,32 +38,41 @@ router.get('/', authenticateToken, requireUser, async (req, res, next) => {
       order: [['nama_barang', 'ASC']]
     });
 
-    // Filter low stock items if requested
+    // Filter low stock items if requested - Enhanced stock monitoring
     let filteredItems = items;
     if (low_stock === 'true') {
       filteredItems = items.filter(item => item.isLowStock());
     }
 
-    // Add stock status to each item
+    // Add enhanced stock status to each item - Week 6 Enhancement
     const itemsWithStatus = filteredItems.map(item => ({
       ...item.toJSON(),
       is_low_stock: item.isLowStock(),
       stock_status: item.stok_terkini === 0 ? 'out_of_stock' : 
-                   item.isLowStock() ? 'low_stock' : 'in_stock'
+                   item.isLowStock() ? 'low_stock' : 'in_stock',
+      // Week 6 Enhancement: Add stock level percentage
+      stock_level_percentage: item.minimum_stock > 0 ? 
+                            Math.round((item.stok_terkini / item.minimum_stock) * 100) : 100
     }));
+
+    // Enhanced logging for stock monitoring
+    logger.info(`Stock query executed: ${itemsWithStatus.length} items returned ${search ? `(search: ${search})` : ''}`);
 
     res.json({
       items: itemsWithStatus,
       total: itemsWithStatus.length,
+      low_stock_count: itemsWithStatus.filter(item => item.is_low_stock).length,
       timestamp: new Date().toISOString()
     });
 
   } catch (error) {
+    logger.error('Error fetching stock items:', error);
     next(error);
   }
 });
 
 // GET /api/stock/:id - Get specific item details
+// Enhanced with comprehensive stock information
 router.get('/:id', [
   param('id').isInt().withMessage('Item ID must be an integer')
 ], authenticateToken, requireUser, async (req, res, next) => {
@@ -65,27 +87,38 @@ router.get('/:id', [
 
     const item = await Item.findByPk(req.params.id);
     if (!item) {
+      logger.warn(`Item not found: ID ${req.params.id} requested by user ${req.user.username}`);
       return res.status(404).json({
         error: 'Item not found',
         code: 'ITEM_NOT_FOUND'
       });
     }
 
+    // Week 6 Enhancement: Add comprehensive item information
+    const itemWithExtendedInfo = {
+      ...item.toJSON(),
+      is_low_stock: item.isLowStock(),
+      stock_status: item.stok_terkini === 0 ? 'out_of_stock' : 
+                   item.isLowStock() ? 'low_stock' : 'in_stock',
+      stock_level_percentage: item.minimum_stock > 0 ? 
+                            Math.round((item.stok_terkini / item.minimum_stock) * 100) : 100,
+      can_fulfill_requests: item.stok_terkini > 0
+    };
+
+    logger.debug(`Item details retrieved: ${item.nama_barang} by ${req.user.username}`);
+
     res.json({
-      item: {
-        ...item.toJSON(),
-        is_low_stock: item.isLowStock(),
-        stock_status: item.stok_terkini === 0 ? 'out_of_stock' : 
-                     item.isLowStock() ? 'low_stock' : 'in_stock'
-      }
+      item: itemWithExtendedInfo
     });
 
   } catch (error) {
+    logger.error(`Error fetching item ${req.params.id}:`, error);
     next(error);
   }
 });
 
 // PUT /api/stock/:id - Update stock manually (admin only)
+// Enhanced with comprehensive transaction logging and validation
 router.put('/:id', [
   param('id').isInt().withMessage('Item ID must be an integer'),
   body('stok_terkini')
@@ -110,6 +143,7 @@ router.put('/:id', [
 
     const item = await Item.findByPk(itemId);
     if (!item) {
+      logger.warn(`Stock update attempted on non-existent item: ID ${itemId} by ${req.user.username}`);
       return res.status(404).json({
         error: 'Item not found',
         code: 'ITEM_NOT_FOUND'
@@ -117,22 +151,28 @@ router.put('/:id', [
     }
 
     const previousStock = item.stok_terkini;
+    const stockChange = stok_terkini - previousStock;
+
+    // Week 6 Enhancement: Add stock change validation and warnings
+    if (Math.abs(stockChange) > 1000) {
+      logger.warn(`Large stock adjustment detected: ${item.nama_barang} change: ${stockChange} by ${req.user.username}`);
+    }
 
     // Update item stock
     await item.update({ stok_terkini });
 
-    // Log transaction
+    // Enhanced transaction logging with more details
     await Transaction.create({
       item_id: itemId,
       user_id: req.user.id,
       type: 'adjustment',
-      quantity: Math.abs(stok_terkini - previousStock),
+      quantity: Math.abs(stockChange),
       previous_stock: previousStock,
       new_stock: stok_terkini,
       notes: notes || `Manual stock adjustment by admin ${req.user.username}`
     });
 
-    // Log audit
+    // Enhanced audit logging - Week 6 Enhancement
     await AuditLog.logAction({
       user_id: req.user.id,
       action: 'update_stock',
@@ -144,21 +184,26 @@ router.put('/:id', [
         item_name: item.nama_barang,
         previous_stock: previousStock,
         new_stock: stok_terkini,
-        notes
+        stock_change: stockChange,
+        adjustment_type: stockChange > 0 ? 'increase' : 'decrease',
+        notes,
+        timestamp: new Date().toISOString()
       }
     });
 
-    // Emit real-time update via Socket.IO
+    // Enhanced real-time update via Socket.IO
     req.io.emit('stock_updated', {
       item_id: itemId,
       nama_barang: item.nama_barang,
       previous_stock: previousStock,
       new_stock: stok_terkini,
+      stock_change: stockChange,
+      adjustment_type: stockChange > 0 ? 'increase' : 'decrease',
       updated_by: req.user.username,
       timestamp: new Date().toISOString()
     });
 
-    logger.info(`Stock updated for item ${item.nama_barang}: ${previousStock} -> ${stok_terkini} by ${req.user.username}`);
+    logger.info(`Stock updated for item ${item.nama_barang}: ${previousStock} -> ${stok_terkini} (${stockChange > 0 ? '+' : ''}${stockChange}) by ${req.user.username}`);
 
     res.json({
       message: 'Stock updated successfully',
@@ -166,17 +211,22 @@ router.put('/:id', [
         ...item.toJSON(),
         is_low_stock: item.isLowStock(),
         stock_status: item.stok_terkini === 0 ? 'out_of_stock' : 
-                     item.isLowStock() ? 'low_stock' : 'in_stock'
+                     item.isLowStock() ? 'low_stock' : 'in_stock',
+        stock_level_percentage: item.minimum_stock > 0 ? 
+                              Math.round((item.stok_terkini / item.minimum_stock) * 100) : 100
       },
-      stock_change: stok_terkini - previousStock
+      stock_change: stockChange,
+      adjustment_type: stockChange > 0 ? 'increase' : 'decrease'
     });
 
   } catch (error) {
+    logger.error(`Error updating stock for item ${req.params.id}:`, error);
     next(error);
   }
 });
 
 // POST /api/stock/restock - Add new stock (restock) - admin only
+// Enhanced restock functionality with comprehensive logging
 router.post('/restock', [
   body('item_id')
     .isInt()
@@ -202,6 +252,7 @@ router.post('/restock', [
 
     const item = await Item.findByPk(item_id);
     if (!item) {
+      logger.warn(`Restock attempted on non-existent item: ID ${item_id} by ${req.user.username}`);
       return res.status(404).json({
         error: 'Item not found',
         code: 'ITEM_NOT_FOUND'
@@ -211,10 +262,15 @@ router.post('/restock', [
     const previousStock = item.stok_terkini;
     const newStock = previousStock + quantity;
 
+    // Week 6 Enhancement: Add large restock validation
+    if (quantity > 10000) {
+      logger.warn(`Large restock detected: ${item.nama_barang} quantity: ${quantity} by ${req.user.username}`);
+    }
+
     // Update item stock
     await item.update({ stok_terkini: newStock });
 
-    // Log transaction
+    // Enhanced transaction logging
     await Transaction.create({
       item_id,
       user_id: req.user.id,
@@ -225,7 +281,7 @@ router.post('/restock', [
       notes: notes || `Restocked by admin ${req.user.username}`
     });
 
-    // Log audit
+    // Enhanced audit logging - Week 6 Enhancement
     await AuditLog.logAction({
       user_id: req.user.id,
       action: 'restock',
@@ -238,11 +294,14 @@ router.post('/restock', [
         quantity_added: quantity,
         previous_stock: previousStock,
         new_stock: newStock,
-        notes
+        restock_percentage: previousStock > 0 ? 
+                          Math.round((quantity / previousStock) * 100) : 0,
+        notes,
+        timestamp: new Date().toISOString()
       }
     });
 
-    // Emit real-time update via Socket.IO
+    // Enhanced real-time update via Socket.IO
     req.io.emit('item_restocked', {
       item_id,
       nama_barang: item.nama_barang,
@@ -261,14 +320,19 @@ router.post('/restock', [
         ...item.toJSON(),
         is_low_stock: item.isLowStock(),
         stock_status: item.stok_terkini === 0 ? 'out_of_stock' : 
-                     item.isLowStock() ? 'low_stock' : 'in_stock'
+                     item.isLowStock() ? 'low_stock' : 'in_stock',
+        stock_level_percentage: item.minimum_stock > 0 ? 
+                              Math.round((item.stok_terkini / item.minimum_stock) * 100) : 100
       },
       quantity_added: quantity,
       previous_stock: previousStock,
-      new_stock: newStock
+      new_stock: newStock,
+      restock_percentage: previousStock > 0 ? 
+                        Math.round((quantity / previousStock) * 100) : 0
     });
 
   } catch (error) {
+    logger.error(`Error restocking item ${req.body.item_id}:`, error);
     next(error);
   }
 });

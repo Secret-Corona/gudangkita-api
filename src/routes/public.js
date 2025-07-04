@@ -3,6 +3,11 @@ const { body, validationResult } = require('express-validator');
 const { Request, Item, AuditLog } = require('../database/models');
 const logger = require('../utils/logger');
 
+/**
+ * Public Routes - Week 6 Enhancement
+ * Enhanced public request handling with improved validation and monitoring
+ * Handles urgent requests from external users (Kanal Umum)
+ */
 const router = express.Router();
 
 // POST /api/public/request - Create urgent request without login (Kanal Umum)
@@ -25,8 +30,11 @@ router.post('/request', [
     .withMessage('Contact information must not exceed 100 characters')
 ], async (req, res, next) => {
   try {
+    // Enhanced validation with detailed logging for public requests
+    // Week 6 Enhancement: Improved public request validation and monitoring
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      logger.warn(`Public request validation failed from IP ${req.ip}:`, errors.array());
       return res.status(400).json({
         error: 'Validation failed',
         details: errors.array()
@@ -39,6 +47,9 @@ router.post('/request', [
       public_requester_name, 
       public_requester_contact 
     } = req.body;
+    
+    // Enhanced logging for public request tracking
+    logger.info(`Public request received: Item ${item_id}, Qty ${jumlah_diminta}, From: ${public_requester_name} [${req.ip}]`);
 
     // Check if item exists
     const item = await Item.findByPk(item_id);

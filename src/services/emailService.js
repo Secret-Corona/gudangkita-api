@@ -9,7 +9,7 @@ const logger = require('../utils/logger');
 class EmailService {
   constructor() {
     // SMTP transporter configuration for production email delivery
-    this.transporter = nodemailer.createTransporter({
+    this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: process.env.SMTP_PORT,
       secure: process.env.SMTP_PORT == 465, // true for 465, false for other ports
@@ -118,14 +118,35 @@ class EmailService {
           throw new Error(`Unknown notification type: ${type}`);
       }
 
-      // For now, we'll log the email instead of sending (since we don't have recipient emails in the model)
-      logger.info(`Email notification [${type}]: ${subject}`);
-      logger.debug('Email content:', { text, html });
-
-      // In a real implementation, you would send emails to:
-      // - Admins for new_request notifications
-      // - Users for approved/rejected notifications
-      // You'd need to add email fields to your User model and implement the actual sending
+      // Check if user has email for actual sending
+      if (user && user.email && (type === 'request_approved' || type === 'request_rejected')) {
+        // Send email to user for approval/rejection notifications
+        await this.sendEmail({
+          to: user.email,
+          subject,
+          text,
+          html
+        });
+        logger.info(`Email notification sent to user: ${user.email}`);
+      } else if (type === 'new_request') {
+        // For new requests, send to admin email from env
+        const adminEmail = process.env.ADMIN_EMAIL;
+        if (adminEmail) {
+          await this.sendEmail({
+            to: adminEmail,
+            subject,
+            text,
+            html
+          });
+          logger.info(`New request notification sent to admin: ${adminEmail}`);
+        } else {
+          logger.warn('ADMIN_EMAIL not configured, skipping new request notification');
+        }
+      } else {
+        // Log the email instead of sending if no email available
+        logger.info(`Email notification [${type}]: ${subject} (No email configured)`);
+        logger.debug('Email content:', { text, html });
+      }
 
       return { success: true, message: 'Email notification processed' };
 

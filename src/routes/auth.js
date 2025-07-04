@@ -118,13 +118,17 @@ router.post('/logout', authenticateToken, async (req, res, next) => {
 // GET /api/auth/profile - Get current user profile
 router.get('/profile', authenticateToken, async (req, res, next) => {
   try {
+    // Get full user data including email
+    const user = await User.findByPk(req.user.id);
+    
     res.json({
       user: {
-        id: req.user.id,
-        username: req.user.username,
-        role: req.user.role,
-        created_at: req.user.created_at,
-        updated_at: req.user.updated_at
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        created_at: user.created_at,
+        updated_at: user.updated_at
       }
     });
   } catch (error) {
@@ -144,6 +148,10 @@ router.post('/register', [
     .withMessage('Password is required')
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters'),
+  body('email')
+    .optional()
+    .isEmail()
+    .withMessage('Valid email address is required'),
   body('role')
     .optional()
     .isIn(['user', 'admin'])
@@ -159,7 +167,7 @@ router.post('/register', [
       });
     }
 
-    const { username, password, role = 'user' } = req.body;
+    const { username, password, email, role = 'user' } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ where: { username } });
@@ -170,10 +178,22 @@ router.post('/register', [
       });
     }
 
+    // Check if email already exists (if provided)
+    if (email) {
+      const existingEmail = await User.findOne({ where: { email } });
+      if (existingEmail) {
+        return res.status(409).json({
+          error: 'Email already exists',
+          code: 'EMAIL_EXISTS'
+        });
+      }
+    }
+
     // Create new user
     const user = await User.create({
       username,
       password,
+      email,
       role
     });
 
